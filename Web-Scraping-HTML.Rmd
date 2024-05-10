@@ -1,0 +1,330 @@
+---
+title: "AS06_Web-Scraping-HTML"
+author: "Teaching Assistant"
+date: "2023/05/04"
+update: "2023/05/03 23:00"
+output:
+  html_document:
+    number_sections: no
+    theme: united
+    highlight: tango
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = 'markup', comment = '#>', error = TRUE)
+```
+
+## 題目說明
+
+這份作業希望能夠讓你熟悉 Web Scraping 的流程，這週的重點會著重在 html。
+
+
+## Scrape PTT
+本小題的案例為[PTT 政黑版](https://www.ptt.cc/bbs/HatePolitics/index.html)，請抓取最近 5 頁的文章列表（約20篇/頁，最新那頁可能不滿20頁，所以頁數應該在80~100頁之間），再抓取每篇文章的內文與留言，並整理出 3 個 dataframe，且分為以下欄位：
+
+- df_index，包含作者(index_author)、標題(index_title)、連結(index_link)
+- df_article，包含作者(article_author)、標題(article_title)、連結(index_link)、時間(article_dt)、內文(article_text)、IP與國家(article_IP)、留言數(article_ncomments)
+- df_comment，包含推文作者(comment_author)、推文時間(comment_dt)、推文內容(comment_text)、推文推噓(comment_type)、連結(index_link)
+
+另外，請注意以下幾點
+
+- 請去掉下方程式碼的註解(檢查部分)，以驗證你所抓到的資料沒有重複    
+- 請用 `glimpse()` 分別呈現上述 tibble 的長相    
+- 請把文章(df_article)和留言(df_comment)串在一起
+
+### 作答區 - 爬蟲程式碼
+
+你可以把結果匯出成 csv，這樣就不用每次 knit 都要重抓一次資料，不過爬蟲的 code 要留著喔！加上 # comment 就好。
+
+#### 引入 Packages
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(rvest)
+library(httr)
+library(xml2)
+
+
+
+```
+### set cookie
+```{r}
+url <- "https://www.ptt.cc/bbs/HatePolitics/index.html"
+response <- GET(url, config = set_cookies("over18" = "1"))
+
+# content() %>% read_html() to an xml_document
+response %>%
+    content("text") %>%
+    read_html() %>%
+    write_html("test_with_cookie.html")
+
+
+# Examining the url
+browseURL("test_with_cookie.html")
+```
+
+
+
+##### generate random number
+```{r}
+generate_random_number <- function() {
+  return(sample(1:5, 1))
+}
+
+num_iterations <- 10
+
+for (i in 1:num_iterations) {
+  random_number <- generate_random_number()
+  cat("Iteration", i, ":", random_number, "\n")
+}
+```
+
+
+
+
+
+#### 製作 df_index
+df_index，包含作者(index_author)、標題(index_title)、連結(index_link)
+```{r message=FALSE, warning=FALSE}
+page <- 4569 # 爬4569頁
+page_id <- 39270 # 政黑板org ->>> 4074
+df_index <- tibble()
+
+for (i in c(61:page)) { #225 #Gossiping
+  url_info <- str_c("https://www.ptt.cc/bbs/Gossiping/index", page_id,".html") %>% GET(config = set_cookies("over18" = "1")) %>% read_html()
+  index_author <- url_info %>% html_nodes("div:nth-child(n) > div.meta > div.author")  %>% html_text() %>% as_tibble() %>% rename(index_author=value) %>% filter(index_author != "-")
+  index_title <- url_info %>% html_nodes("div:nth-child(n) > div.title")  %>% html_text() %>% trimws()  %>% as_tibble() %>% rename(index_title=value) %>% filter( ( !str_detect(index_title, "刪除") |  !str_detect(index_title, "已被")  ) )
+  index_link <- url_info %>% html_nodes("div:nth-child(n) > div.title > a")  %>% html_attr("href") %>% as_tibble() %>% rename(index_link=value)
+  article_list <- bind_cols(index_author, index_title, index_link )
+
+  df_index <- bind_rows(df_index, article_list)
+  random_number <- generate_random_number()
+  message(paste("Page", i, "DONE", "Sleep>>", random_number))
+  #break
+  page_id <- page_id -1
+  Sys.sleep(random_number)
+
+}
+
+df_index %>%
+  mutate(index_link = )
+
+### 記得將df_index 寫入檔案
+df_index %>% write_rds("df_index.rds")
+df_index %>% write_csv("df_index.csv")
+
+### results should be...
+# df_index <- read_csv("df_index.csv")
+df_index
+
+```
+
+
+#### 製作 df_article
+- df_article，包含作者(article_author)、標題(article_title)、連結(index_link)、時間(article_dt)、內文(article_text)、IP與國家(article_IP)、留言數(article_ncomments)
+
+```{r message=FALSE, warning=FALSE}
+df_article <- tibble()
+df_comment <- tibble()
+for (i in 1:nrow(df_index)) {
+  
+  
+  article_link <- df_index$index_link[i]
+  
+  # article
+  article_info <- str_c("https://www.ptt.cc",article_link) %>% GET(config = set_cookies("over18" = "1")) %>% read_html()
+  article_author <- article_info %>% html_nodes("div:nth-child(1) > span.article-meta-value")  %>% html_text()
+  article_title <- article_info %>% html_nodes("div:nth-child(3) > span.article-meta-value")  %>% html_text()
+  index_link <- str_c("https://www.ptt.cc",article_link)
+  article_dt <- article_info %>% html_nodes("div:nth-child(4) > span.article-meta-value")  %>% html_text()
+  article_text <- article_info %>% html_nodes( xpath = '//*[@id="main-content"]/text()' )  %>% html_text() %>% str_c(collapse="") %>% str_replace_all("\n", "")
+  article_IP <- article_info %>% html_nodes( "#main-content > span.f2:nth-child(n)" )  %>% html_text() %>% str_extract_all("([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+ \\(\\w+\\))") %>% unlist()
+  article_ncomments <- article_info %>% html_nodes( "#main-content > div.push" ) %>% length
+#
+  if (identical(article_author, character(0)))  article_author = ""
+  if (identical(article_title, character(0)))   article_title = ""
+  if (identical(index_link, character(0)))      index_link = ""
+  if (identical(article_dt, character(0)))      article_dt = ""
+  if (identical(article_text, character(0)))    article_text = ""
+  if (identical(article_IP, character(0)))      article_IP = ""
+  article_tibble <- tibble(article_author, article_title, index_link, article_dt, article_text, article_IP, article_ncomments)
+  df_article <- bind_rows(df_article, article_tibble)
+  print(paste0(article_dt, "          <   article ", i, " / length:", nrow(df_article), "   > --- DONE" ))
+  
+  
+  
+  # comment
+  comment_author <- article_info %>% html_nodes("#main-content > div.push > span.push-userid")  %>% html_text2()
+  comment_dt <- article_info %>% html_nodes("#main-content > div.push > span.push-ipdatetime")  %>% html_text() %>% trimws()
+  comment_text <- article_info %>% html_nodes("#main-content > div.push > span.push-content")  %>% html_text()
+  comment_type <- article_info %>% html_nodes("#main-content > div.push > span.push-tag") %>% html_text() %>% trimws()
+  comment_tibble <- tibble(index_link, comment_author, comment_dt, comment_text, comment_type)
+  df_comment <- bind_rows(df_comment, comment_tibble)
+  print(paste0(article_dt, "          <   comment ", i, " / length:", nrow(df_comment), "   > --- DONE" ))
+
+
+  Sys.sleep(2)
+}
+# 
+df_article %>% head(100) %>% view()
+df_article %>% head(30) %>% view()
+df_article %>% view()
+
+### 記得將 df_article 寫入檔案
+df_article %>% write_csv("df_article_2.csv")
+df_comment %>% write_csv("df_comment_2.csv")
+
+
+### results should be...
+# df_article <- read_csv("df_article.csv")
+# df_article 
+
+```
+
+```{r}
+for (article_link in df_index$index_link[1:3]) {
+  print(article_link)
+}
+
+
+df_index %>%
+  filter(index_link=="/bbs/HatePolitics/M.1689564201.A.93D.html")
+```
+
+
+
+
+
+
+
+#### 製作df_comment
+- df_comment，包含連結(index_link)、推文作者(comment_author)、推文時間(comment_dt)、推文內容(comment_text)、推文推噓(comment_type)、連結(index_link)
+
+```{r message=FALSE, warning=FALSE}
+df_comment <- tibble()
+p <- 0
+for (article_link in df_index$index_link) {
+  p = p + 1
+  index_link <- article_link
+  article_info <- str_c("https://www.ptt.cc",article_link) %>% read_html
+  comment_author <- article_info %>% html_nodes("#main-content > div.push > span.push-userid")  %>% html_text2()
+  comment_dt <- article_info %>% html_nodes("#main-content > div.push > span.push-ipdatetime")  %>% html_text() %>% trimws()
+  comment_text <- article_info %>% html_nodes("#main-content > div.push > span.push-content")  %>% html_text()
+  comment_type <- article_info %>% html_nodes("#main-content > div.push > span.push-tag") %>% html_text() %>% trimws()
+  comment_tibble <- tibble(index_link, comment_author, comment_dt, comment_text, comment_type)
+  df_comment <- bind_rows(df_comment, comment_tibble)
+  print(paste("PAGE", p, "DONE" ))
+
+  Sys.sleep(3)#break
+}
+
+### 記得將 df_comment 寫入檔案
+# df_comment %>% write_csv("df_comment.csv")
+
+
+### results should be...
+df_comment <- read_csv("df_comment.csv")
+df_comment
+
+```
+
+### 作業要求檢查
+請將上面的三個df存成csv檔案，並進行以下測試：
+```{r message=FALSE, warning=FALSE}
+### 助教解答
+# df_index <- read_csv("ans_data/df_index.csv") # 檢查時請改成自己檔案路徑
+# df_article <- read_csv("ans_data/df_article.csv") # 檢查時請改成自己的檔案路徑
+# df_comment <- read_csv("ans_data/df_comment.csv") # 檢查時請改成自己的檔案路徑
+# 
+# # 檢查部分!!! 請去掉!!!
+# df_index %>% summarise(n_distinct(index_link)) #助教爬的篇數為92
+# df_article %>% summarise(n_distinct(index_link)) #助教爬的篇數為92
+# df_comment %>% summarise(n_distinct(index_link)) #助教爬的篇數為88(在爬df_comment的當下, 沒有留言的有4篇)
+# 合理的篇數應該要介在80-100之間(最新的一頁可能不滿20篇)
+# 
+
+```
+### 不必操作
+有了留言資料，如果未來有需求，你可以將貼文資料(df_article)跟留言資料(df_comment)join起來
+```{r message=FALSE, warning=FALSE}
+df_article %>%
+  left_join(df_comment) %>%
+  head(10)
+
+
+```
+
+
+## Scrape 公視新聞網
+本小題案例希望你爬[公視新聞網](https://news.pts.org.tw/)的新聞內容，搜尋關鍵字「俄烏戰爭」，爬取最近五頁(一頁15筆)的新聞文章。
+
+最後請輸出欄位包含「新聞發佈時間(time_point)」、「新聞標題(title_text)」、「新聞連結(title_url)」、「新聞內容本文(contents)」。
+
+```{r message=FALSE, warning=FALSE}
+# keyword <- "俄烏戰爭"
+# results <- tibble()
+# for (i in 1:5) {
+#   url_pts <- str_c("https://news.pts.org.tw/search/", keyword, "/?page=", i)
+#   pts_info <- url_pts %>% read_html()
+#   title_text <- pts_info %>%
+#     html_nodes("li> div > h2 > a") %>% html_text2()
+#   title_url <- pts_info %>%
+#     html_nodes("li> div > h2 > a") %>% html_attr("href")
+#   time_point <- pts_info %>%
+#     html_nodes("div.container > div.row.justify-content-center > div > ul > li:nth-child(n) > div > div > time") %>% html_text2()
+#   message("i:", i)
+#   newslist_tibble <- tibble(time_point, title_text, title_url)
+#   
+#   content_tibble <- tibble()
+#   for (j in 1:length(title_url)) {
+#     content<- title_url[j] %>% read_html 
+#     message("j:", j)
+#     Sys.sleep(3)
+#     contents <- content %>%
+#       html_nodes("body > div:nth-child(9) > div > div.col-lg-8 > article") %>%
+#       html_text2 %>% tibble() %>% rename(contents = ".")
+#     content_tibble <- bind_rows( content_tibble , tibble(title_url = title_url[j], contents) )
+#     
+#   } # // for j
+#   
+#   results <- newslist_tibble %>% left_join( content_tibble )
+#   
+# } # // i
+
+# results %>% write_csv("results_pts.csv")
+
+
+### result shoule be...
+results <- read_csv("ans_data/results_pts.csv")
+results
+
+```
+
+
+```{r}
+keyword <- "俄烏戰爭"
+
+url <- str_c("https://news.pts.org.tw/search/", keyword, "/?page=", "1")
+url %>% read_html() %>%
+  html_nodes("li> div > h2 > a") %>% 
+  html_text2()
+
+
+# /////////////
+
+library(polite)
+
+session <- bow(url, force = TRUE)
+result <- scrape(session) %>%
+  html_nodes("li> div > h2 > a") %>% 
+  html_text2()
+
+result
+
+
+```
+
+
